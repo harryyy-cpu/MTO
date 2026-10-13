@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Daily Attendance</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mut:#6b7380;--ac:#2563eb;--ok:#16a34a;--bad:#dc2626;--bd:#e3e6ea}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171b;--card:#1d2127;--tx:#e8eaed;--mut:#98a0ab;--ac:#6d9bff;--ok:#4ade80;--bad:#f87171;--bd:#2d333b}}
+:root[data-theme="dark"]{--bg:#14171b;--card:#1d2127;--tx:#e8eaed;--mut:#98a0ab;--ac:#6d9bff;--ok:#4ade80;--bad:#f87171;--bd:#2d333b}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:20px 0 8px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:4px 12px}
+.card.bad{border-color:var(--bad)}
+h2.bad{color:var(--bad)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--bd)}
+.row:last-child{border-bottom:0}
+.mut{color:var(--mut);font-size:14px}
+button{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;padding:8px 12px;cursor:pointer}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+button.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+input{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;padding:8px 10px;min-width:0}
+.bar{display:flex;gap:8px;align-items:center}
+.bar input[type=date]{flex:1}
+.add{display:flex;gap:8px;margin-top:8px}.add input{flex:1}
+.empty{padding:12px 0;color:var(--mut);font-size:14px}
+.x{color:var(--mut);padding:4px 8px}
+.top{display:flex;justify-content:space-between;align-items:center}
+#login{max-width:340px;margin:12vh auto 0;display:flex;flex-direction:column;gap:10px}
+#err{color:var(--bad);font-size:14px;min-height:20px}
+.hide{display:none}
+</style></head><body><main>
+
+<div id="msg" class="mut hide"></div>
+
+<form id="login" class="hide" onsubmit="return false">
+  <h1>📋 Daily Attendance</h1>
+  <input id="em" type="email" placeholder="Email" autocomplete="username">
+  <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <button class="p" id="lb" type="button">Log in</button>
+  <div id="err"></div>
+</form>
+
+<div id="app" class="hide">
+  <div class="top"><h1>📋 Daily Attendance</h1><button id="out">Log out</button></div>
+  <div class="bar"><button id="prev">‹</button><input type="date" id="d"><button id="next">›</button></div>
+  <div class="mut" id="sum" style="margin-top:8px"></div>
+
+  <h2>To check</h2><div class="card" id="vis"></div>
+  <h2>Present</h2><div class="card" id="pres"></div>
+  <h2>Hidden</h2><div class="card" id="hid"></div>
+  <h2 class="bad">3 consecutive absences</h2><div class="card bad" id="abs"></div>
+
+  <h2>Settings</h2>
+  <div class="card" style="padding:12px">
+    <div class="row" style="padding-top:0"><span>Cycle length (days)</span><input type="number" id="cd" min="2" max="14" style="width:70px"></div>
+    <div class="mut" style="padding:8px 0">With a 3-day cycle: present on the 13th → hidden on the 14th and 15th → back on the 16th.</div>
+    <div class="add"><input id="nm" placeholder="New name"><button class="p" id="addb">Add</button></div>
+    <div id="ppl"></div>
+  </div>
+</div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+/* ====== PASTE YOUR SUPABASE VALUES HERE (Project Settings -> API) ====== */
+var CFG={url:"https://dceeikshnfklxzmvwzpn.supabase.co",key:"sb_publishable_b9vO4F613gLz35cwdQRvCw_TdUknTew"};
+/* ======================================================================= */
+
+var $=function(i){return document.getElementById(i)};
+var sb=null,S={people:[],rec:{},cd:3,added:{},ids:{}};
+var cur=iso(new Date());
+
+function iso(dt){var m=dt.getMonth()+1,d=dt.getDate();return dt.getFullYear()+"-"+(m<10?"0":"")+m+"-"+(d<10?"0":"")+d}
+function shift(s,n){var a=s.split("-");return iso(new Date(+a[0],+a[1]-1,+a[2]+n))}
+function diff(a,b){return Math.round((Date.parse(b)-Date.parse(a))/864e5)}
+function pretty(s){var a=s.split("-");return new Date(+a[0],+a[1]-1,+a[2]).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}
+function esc(s){return s.replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function show(id){["msg","login","app"].forEach(function(x){$(x).classList.toggle("hide",x!=id)})}
+
+/* ---------- data ---------- */
+async function load(){
+  var p=await sb.from("people").select("id,name,added_on").order("name");
+  if(p.error)throw p.error;
+  var st=await sb.from("settings").select("cycle").eq("id",1).maybeSingle();
+  if(st.error)throw st.error;
+  var rows=[],from=0;
+  while(true){
+    var r=await sb.from("attendance").select("person_id,date").order("date").order("person_id").range(from,from+999);
+    if(r.error)throw r.error;
+    rows=rows.concat(r.data);
+    if(r.data.length<1000)break;
+    from+=1000;
+  }
+  S={people:[],rec:{},cd:st.data?st.data.cycle:3,added:{},ids:{}};
+  var byId={};
+  p.data.forEach(function(x){S.people.push(x.name);S.added[x.name]=x.added_on;S.ids[x.name]=x.id;byId[x.id]=x.name});
+  rows.forEach(function(x){var n=byId[x.person_id];if(n)(S.rec[x.date]=S.rec[x.date]||[]).push(n)});
+}
+async function run(fn){
+  try{var r=await fn();if(r&&r.error)throw r.error}
+  catch(e){alert("Could not save: "+(e.message||e));try{await load()}catch(_){}}
+  render();
+}
+
+/* ---------- logic ---------- */
+function isPresent(n,d){return (S.rec[d]||[]).indexOf(n)>-1}
+function lastBefore(n,d){var best=null;for(var k in S.rec){if(k<d&&S.rec[k].indexOf(n)>-1&&(!best||k>best))best=k}return best}
+function hideInfo(n,d){var p=lastBefore(n,d);if(p&&diff(p,d)<S.cd)return shift(p,S.cd);return null}
+function absentStreak(n,d){
+  var days=Object.keys(S.rec).filter(function(k){return k<d&&S.rec[k].length&&(!S.added[n]||k>=S.added[n])}).sort().reverse().slice(0,3);
+  if(days.length<3)return null;
+  for(var i=0;i<3;i++){if(isPresent(n,days[i])||hideInfo(n,days[i]))return null}
+  return days[2];
+}
+
+/* ---------- ui ---------- */
+function row(n,right){return '<div class="row"><span>'+esc(n)+'</span>'+right+'</div>'}
+function render(){
+  $("d").value=cur;$("cd").value=S.cd;
+  var v=[],p=[],h=[],a=[];
+  S.people.forEach(function(n){
+    if(isPresent(n,cur))p.push(n);
+    else{
+      var r=hideInfo(n,cur);
+      if(r)h.push([n,r]);
+      else{var s=absentStreak(n,cur);if(s)a.push([n,s]);else v.push(n)}
+    }
+  });
+  $("vis").innerHTML=v.length?v.map(function(n){return row(n,'<button class="ok" data-a="mark" data-n="'+esc(n)+'">Present</button>')}).join(""):'<div class="empty">Everyone is checked 🎉</div>';
+  $("pres").innerHTML=p.length?p.map(function(n){return row(n,'<button data-a="undo" data-n="'+esc(n)+'">Undo</button>')}).join(""):'<div class="empty">No one marked present yet.</div>';
+  $("hid").innerHTML=h.length?h.map(function(x){return row(x[0],'<span class="mut">back on '+pretty(x[1])+'</span>')}).join(""):'<div class="empty">No one hidden.</div>';
+  $("abs").innerHTML=a.length?a.map(function(x){return row(x[0],'<span class="mut">absent since '+pretty(x[1])+'</span><button class="ok" data-a="mark" data-n="'+esc(x[0])+'">Present</button>')}).join(""):'<div class="empty">No one with 3 absences in a row.</div>';
+  $("sum").textContent=pretty(cur)+" · "+p.length+" present · "+v.length+" to check · "+h.length+" hidden · "+a.length+" absent 3x";
+  $("ppl").innerHTML=S.people.map(function(n){return row(n,'<button class="x" data-a="del" data-n="'+esc(n)+'">✕</button>')}).join("");
+}
+
+document.addEventListener("click",function(e){
+  var b=e.target.closest("button");if(!b)return;
+  var a=b.getAttribute("data-a"),n=b.getAttribute("data-n");
+  if(!a)return;
+  var id=S.ids[n],day=cur;
+  if(a=="mark"){
+    (S.rec[day]=S.rec[day]||[]).push(n);render();
+    run(function(){return sb.from("attendance").upsert({person_id:id,date:day})});
+  }else if(a=="undo"){
+    S.rec[day]=(S.rec[day]||[]).filter(function(x){return x!=n});render();
+    run(function(){return sb.from("attendance").delete().eq("person_id",id).eq("date",day)});
+  }else if(a=="del"){
+    if(!confirm("Remove "+n+" and all their records?"))return;
+    S.people=S.people.filter(function(x){return x!=n});
+    for(var k in S.rec)S.rec[k]=S.rec[k].filter(function(x){return x!=n});
+    render();
+    run(function(){return sb.from("people").delete().eq("id",id)});
+  }
+});
+$("addb").onclick=async function(){
+  var n=$("nm").value.trim();
+  if(!n||S.people.indexOf(n)>-1)return;
+  var r=await sb.from("people").insert({name:n,added_on:cur}).select("id,name,added_on").single();
+  if(r.error){alert("Could not add: "+r.error.message);return}
+  $("nm").value="";
+  try{await load()}catch(e){}
+  render();
+};
+$("nm").onkeydown=function(e){if(e.key=="Enter")$("addb").click()};
+$("prev").onclick=function(){cur=shift(cur,-1);render()};
+$("next").onclick=function(){cur=shift(cur,1);render()};
+$("d").onchange=function(){if(this.value){cur=this.value;render()}};
+$("cd").onchange=function(){
+  var v=parseInt(this.value);
+  if(v>=2&&v<=14){S.cd=v;render();run(function(){return sb.from("settings").upsert({id:1,cycle:v})})}
+};
+
+/* ---------- auth + start ---------- */
+async function start(){
+  show("msg");$("msg").textContent="Loading…";
+  try{await load();show("app");render()}
+  catch(e){$("msg").textContent="Could not load data: "+(e.message||e)+" — did you run schema.sql?"}
+}
+async function doLogin(){
+  $("err").textContent="";
+  var r=await sb.auth.signInWithPassword({email:$("em").value.trim(),password:$("pw").value});
+  if(r.error){$("err").textContent=r.error.message;return}
+  start();
+}
+$("lb").onclick=doLogin;
+$("pw").onkeydown=function(e){if(e.key=="Enter")doLogin()};
+$("out").onclick=async function(){await sb.auth.signOut();show("login")};
+
+(async function(){
+  if(CFG.url.indexOf("YOUR_")==0){show("msg");$("msg").textContent="Setup needed: open index.html and paste your Supabase URL and anon key into CFG.";return}
+  sb=supabase.createClient(CFG.url,CFG.key);
+  var s=await sb.auth.getSession();
+  if(s.data&&s.data.session)start();else show("login");
+})();
+</script></body></html>
